@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Path, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Path, UploadFile, File, Form, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -26,6 +26,7 @@ router = APIRouter()
 
 @router.post("/users/{user_id}/profile/", status_code=201, response_model=ProfileResponseSchema)
 async def create_user_profile(
+        request: Request,
         user_id: int = Path(),
         first_name: str = Form(...),
         last_name: str = Form(...),
@@ -49,13 +50,18 @@ async def create_user_profile(
             info=validate_info(info),
             avatar=validate_image(avatar)
         )
-
-    # Error handling returns the specified messages and status codes for each scenario.
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error))
 
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Authorization header is missing")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format. Expected 'Bearer <token>'")
+
     try:
         decoded_token = jwt_manager.decode_access_token(token_header)
+    # Error handling returns the specified messages and status codes for each scenario.
     except BaseSecurityError as error:
         raise HTTPException(
             status_code=401,
