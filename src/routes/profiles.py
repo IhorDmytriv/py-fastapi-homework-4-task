@@ -105,4 +105,4 @@ async def create_user_profile(
     await db.commit()
     await db.refresh(db_user, ["profile"])
 
-    return db_user.profile
+    return ProfileResponseSchema.model_validate(db_user.profile)

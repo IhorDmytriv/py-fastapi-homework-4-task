@@ -17,8 +17,10 @@ class ProfileBaseSchema(BaseModel):
 
 class ProfileResponseSchema(ProfileBaseSchema):
     id: int
-    gender: str
     avatar: str
+
+    class Config:
+        from_attributes = True
 
 
 class ProfileCreateSchema(ProfileBaseSchema):
