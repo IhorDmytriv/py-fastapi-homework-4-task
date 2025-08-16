@@ -1,5 +1,96 @@
-from fastapi import APIRouter
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Path, UploadFile, File, Form
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
+
+from config import get_jwt_auth_manager, get_s3_storage_client
+from database import get_db, UserModel, UserProfileModel
+from database.models.accounts import UserGroupModel
+from exceptions import BaseS3Error, BaseSecurityError
+from schemas.profiles import ProfileCreateSchema, ProfileResponseSchema
+from security.http import get_token
+from security.interfaces import JWTAuthManagerInterface
+from storages import S3StorageInterface
 
 router = APIRouter()
 
-# Write your code here
+
+@router.post("/users/{user_id}/profile/", status_code=201, response_model=ProfileResponseSchema)
+async def create_user_profile(
+        user_id: int = Path(),
+        first_name: str = Form(...),
+        last_name: str = Form(...),
+        gender: str = Form(...),
+        date_of_birth: date = Form(...),
+        info: str = Form(...),
+        avatar: UploadFile = File(...),
+        s3_client: S3StorageInterface = Depends(get_s3_storage_client),
+        db: AsyncSession = Depends(get_db),
+        token_header: str = Depends(get_token),
+        jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
+
+):
+
+    profile_data = ProfileCreateSchema(
+        first_name=first_name,
+        last_name=last_name,
+        gender=gender,
+        date_of_birth=date_of_birth,
+        info=info,
+        avatar=avatar
+    )
+
+    try:
+        decoded_token = jwt_manager.decode_access_token(token_header)
+    except BaseSecurityError as error:
+        raise HTTPException(
+            status_code=401,
+            detail=str(error),
+        )
+
+    current_user_id = decoded_token.get("user_id")
+    current_user_group_name = await db.scalar(
+        select(UserGroupModel.name)
+        .select_from(UserModel)
+        .join(UserModel.group)
+        .where(UserModel.id == current_user_id)
+    )
+
+    if user_id != current_user_id and current_user_group_name != "admin":
+        raise HTTPException(status_code=403, detail="You don't have permission to edit this profile.")
+
+    result = await db.execute(
+        select(UserModel)
+        .options(joinedload(UserModel.profile))
+        .filter_by(id=user_id)
+    )
+    db_user = result.scalar_one_or_none()
+
+    if not db_user or not db_user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or not active.")
+
+    if db_user.profile:
+        raise HTTPException(status_code=400, detail="User already has a profile.")
+
+    contents = await avatar.read()
+    file_name = f"avatars/{db_user.id}_avatar.jpg"
+
+    try:
+        await s3_client.upload_file(file_name=file_name, file_data=contents)
+    except BaseS3Error:
+        raise HTTPException(status_code=500, detail="Failed to upload avatar. Please try again later.")
+
+    db_user.profile = UserProfileModel(
+        first_name=first_name.lower(),
+        last_name=last_name.lower(),
+        gender=profile_data.gender,
+        date_of_birth=date_of_birth,
+        info=info,
+        avatar=await s3_client.get_file_url(file_name)
+    )
+    await db.commit()
+    await db.refresh(db_user, ["profile"])
+
+    return db_user.profile
