@@ -49,6 +49,8 @@ async def create_user_profile(
             info=validate_info(info),
             avatar=validate_image(avatar)
         )
+
+    # Error handling returns the specified messages and status codes for each scenario.
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error))
 
