@@ -85,7 +85,9 @@ async def create_user_profile(
         raise HTTPException(status_code=400, detail="User already has a profile.")
 
     contents = await profile_data.avatar.read()
-    file_name = f"avatars/{db_user.id}_avatar.jpg"
+    image_format_type = profile_data.avatar.content_type.split("/")[-1]
+    image_format_type = "jpg" if image_format_type == "jpeg" else image_format_type
+    file_name = f"avatars/{db_user.id}_avatar.{image_format_type}"
 
     try:
         await s3_client.upload_file(file_name=file_name, file_data=contents)
