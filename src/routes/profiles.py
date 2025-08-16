@@ -13,6 +13,13 @@ from schemas.profiles import ProfileCreateSchema, ProfileResponseSchema
 from security.http import get_token
 from security.interfaces import JWTAuthManagerInterface
 from storages import S3StorageInterface
+from validation import (
+    validate_name,
+    validate_image,
+    validate_gender,
+    validate_birth_date,
+    validate_info
+)
 
 router = APIRouter()
 
@@ -33,14 +40,17 @@ async def create_user_profile(
 
 ):
 
-    profile_data = ProfileCreateSchema(
-        first_name=first_name,
-        last_name=last_name,
-        gender=gender,
-        date_of_birth=date_of_birth,
-        info=info,
-        avatar=avatar
-    )
+    try:
+        profile_data = ProfileCreateSchema(
+            first_name=validate_name(first_name),
+            last_name=validate_name(last_name),
+            gender=validate_gender(gender),
+            date_of_birth=validate_birth_date(date_of_birth),
+            info=validate_info(info),
+            avatar=validate_image(avatar)
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
 
     try:
         decoded_token = jwt_manager.decode_access_token(token_header)
@@ -74,7 +84,7 @@ async def create_user_profile(
     if db_user.profile:
         raise HTTPException(status_code=400, detail="User already has a profile.")
 
-    contents = await avatar.read()
+    contents = await profile_data.avatar.read()
     file_name = f"avatars/{db_user.id}_avatar.jpg"
 
     try:
@@ -83,11 +93,11 @@ async def create_user_profile(
         raise HTTPException(status_code=500, detail="Failed to upload avatar. Please try again later.")
 
     db_user.profile = UserProfileModel(
-        first_name=first_name.lower(),
-        last_name=last_name.lower(),
+        first_name=profile_data.first_name.lower(),
+        last_name=profile_data.last_name.lower(),
         gender=profile_data.gender,
-        date_of_birth=date_of_birth,
-        info=info,
+        date_of_birth=profile_data.date_of_birth,
+        info=profile_data.info,
         avatar=await s3_client.get_file_url(file_name)
     )
     await db.commit()
